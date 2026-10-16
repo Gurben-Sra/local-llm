@@ -1,0 +1,43 @@
+services:
+  api:
+    build: .
+    command: ["python", "server.py"]
+    environment:
+      MODEL_PATH: /models/allura-forge_Llama-3.3-8B-Instruct-Q4_K_M.gguf
+      MODEL_ALIAS: local-llm
+      N_CTX: "2048"
+      N_GPU_LAYERS: "0"
+      HOST: 0.0.0.0
+      PORT: "8000"
+      GRADIO_ANALYTICS_ENABLED: "False"
+    volumes:
+      - ./models:/models:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/models', timeout=5)"
+      interval: 15s
+      timeout: 8s
+      retries: 10
+      start_period: 180s
+    restart: unless-stopped
+
+  ui:
+    build: .
+    command: ["python", "ui.py"]
+    environment:
+      LLM_API_URL: http://api:8000/v1/chat/completions
+      LLM_MODEL: local-llm
+      UI_HOST: 0.0.0.0
+      UI_PORT: "7860"
+      GRADIO_ANALYTICS_ENABLED: "False"
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:7860:7860"
+    restart: unless-stopped
