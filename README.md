@@ -8,6 +8,26 @@ provides an OpenAI-compatible API and a small Gradio chat UI.
 > checked-in model directory is local runtime data, not part of the Docker
 > image or source distribution.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    Browser[User browser] -->|localhost:7860| UI[Gradio chat UI]
+    subgraph Host[Local machine]
+        subgraph Compose[Docker Compose network]
+            UI -->|Chat Completions HTTP| API[llama.cpp OpenAI-compatible API]
+        end
+        Weights[(Host models/ directory)]
+        Weights -.->|read-only mount; API loads GGUF| API
+    end
+```
+
+The browser talks to the UI through the loopback-published port. The UI sends
+chat requests to the API over the private container network. The API loads the
+GGUF file from the host-mounted `models/` directory; neither model weights nor
+training data are copied into the image. No training or dataset ingestion
+service is part of the current architecture.
+
 ## Requirements
 
 - Python 3.12 for the local setup, or Docker Engine with the Compose plugin.
@@ -20,6 +40,18 @@ provides an OpenAI-compatible API and a small Gradio chat UI.
 The model is a quantized inference artifact. Review the model's [license and
 terms](https://huggingface.co/bartowski/allura-forge_Llama-3.3-8B-Instruct-GGUF)
 before using or distributing it.
+
+## Local files and cleanup
+
+The model file is required for inference and is intentionally kept outside
+Git. Keep `models/README.md` for model provenance and license information. The
+small `allura-forge_Llama-3.3-8B-Instruct-imatrix.gguf` file is not used by this
+app; keep it only if you use external quantization tools that need it.
+
+Python environments (`.venv/` and `venv/`), Python bytecode caches,
+`models/.cache/`, `ui.log`, and `resp.json` are local/generated files, not
+deployment inputs. Remove only the ones you no longer need. A Python
+environment can always be recreated from `requirements.txt`.
 
 ## Run locally
 
