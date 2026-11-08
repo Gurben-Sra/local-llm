@@ -20,7 +20,7 @@ COPY requirements.txt ./
 RUN python -m pip install --upgrade pip \
     && python -m pip install -r requirements.txt
 
-COPY run.py server.py ui.py ./
+COPY retrieval.py run.py server.py ui.py ./
 RUN useradd --create-home --uid 10001 app \
     && mkdir -p /models \
     && chown app:app /app /models

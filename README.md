@@ -1,32 +1,79 @@
-# Local LLM
+# Lumin
 
-A local inference prototype for the Llama 3.3 8B Instruct GGUF model. It
-provides an OpenAI-compatible API and a small Gradio chat UI.
+Lumin is a lightweight, local assistant prototype. It currently provides an
+OpenAI-compatible inference API and a Gradio chat UI backed by a Llama 3.3 8B
+Instruct GGUF model.
 
-> **This project currently runs inference; it does not train or fine-tune a
-> model.** No user training dataset or training pipeline is present. The
-> checked-in model directory is local runtime data, not part of the Docker
-> image or source distribution.
+> **This project runs inference and read-only local document retrieval; it
+does not train or fine-tune a model and has no command or file-write agent
+tools.** No workload corpus or training dataset is bundled. Model weights and
+workload data are local runtime inputs, not part of the Docker image or
+source distribution.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    Browser[User browser] -->|localhost:7860| UI[Gradio chat UI]
+    Browser[User browser] -->|localhost:7860| UI[Lumin chat UI]
     subgraph Host[Local machine]
         subgraph Compose[Docker Compose network]
             UI -->|Chat Completions HTTP| API[llama.cpp OpenAI-compatible API]
         end
         Weights[(Host models/ directory)]
+        WorkloadDocs[(Host workloads/ directory)]
         Weights -.->|read-only mount; API loads GGUF| API
+        WorkloadDocs -.->|read-only mount; UI indexes locally| UI
     end
 ```
 
-The browser talks to the UI through the loopback-published port. The UI sends
+The browser talks to Lumin through the loopback-published port. The UI sends
 chat requests to the API over the private container network. The API loads the
-GGUF file from the host-mounted `models/` directory; neither model weights nor
-training data are copied into the image. No training or dataset ingestion
-service is part of the current architecture.
+GGUF file from the host-mounted `models/` directory. The UI indexes curated
+workload documents from a separate read-only mount using an in-memory SQLite
+FTS index; neither model weights nor workload data are copied into the image.
+
+## Lumin roadmap
+
+The first workload is answering questions about explicitly selected workload
+documentation and configuration. Keep each workload's data separate from the
+base model and its serving image.
+
+1. **Establish a reproducible local baseline.** Keep CPU-only inference as the
+default, make model and workload paths configurable, and test startup and
+chat behavior.
+2. **Keep retrieval local and bounded.** Lumin mounts an operator-selected
+workload directory read-only, indexes supported text and configuration
+formats in memory with SQLite FTS, and returns source paths and line ranges
+relative to the mounted directory as references. It does not silently upload
+documents or fetch dependencies at runtime. Add semantic embeddings only if
+evaluation shows keyword retrieval is insufficient and the extra model cost
+fits the target hardware.
+3. **Evaluate against a separate test set.** Keep representative
+question/expected-source examples outside the retrieval corpus. Measure
+whether answers are grounded in retrieved sources, whether citations point
+to the right files, and how indexing affects memory, disk, and startup.
+These examples are evaluation data, not automatically training data.
+4. **Introduce tools only when a workload needs them.** Begin with no tools
+enabled. Add named, narrowly scoped capabilities behind an explicit
+per-workload allowlist. For the document-question-answering workload,
+command execution and file modification should remain disabled. If a
+later task needs them, isolate it in a separate container with read-only
+mounts by default, resource and time limits, and explicit operator approval
+for writes or command execution.
+5. **Treat fine-tuning as a later, optional experiment.** Retrieval is the
+better first choice for workload facts and configuration that can change.
+Consider LoRA/QLoRA only for a demonstrated behavior or format gap, using
+lawful curated examples and held-out evaluations. Fine-tune a suitable
+source checkpoint, then convert and quantize an evaluated result for local
+inference; do not train on the current inference GGUF.
+6. **Keep workload packages portable.** Version workload configuration,
+source lists, evaluation cases, and index settings independently from Lumin.
+Do not bundle sensitive source documents or indexes into the base image.
+Record provenance and provide a way to rebuild an index locally.
+
+This sequence keeps the first useful agent-like capability—grounded,
+workload-specific answers—small and inspectable. It does not grant the model
+general shell access or write access to the workload.
 
 ## Requirements
 
@@ -64,6 +111,12 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
+
+Put curated workload documentation and non-secret configuration in
+`workloads/`. The UI indexes supported files at startup. See
+[workloads/README.md](./workloads/README.md) for accepted formats and limits.
+No documents are required to start; without matching sources, Lumin reports
+that it could not find a supporting reference.
 
 `llama-cpp-python` builds a CPU backend by default. Building it from source can
 take several minutes and requires a C/C++ compiler and CMake. To use optimized
@@ -104,9 +157,10 @@ python run.py
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `MODEL_PATH` | `models/allura-forge_Llama-3.3-8B-Instruct-Q4_K_M.gguf` | GGUF model file |
-| `MODEL_ALIAS` / `LLM_MODEL` | `local-llm` | API model name |
+| `MODEL_ALIAS` / `LLM_MODEL` | `lumin` | API model name |
 | `N_CTX` | `2048` | Context length |
 | `N_GPU_LAYERS` | `0` | Layers offloaded to a CUDA-enabled llama.cpp build |
+| `WORKLOAD_DOCS_PATH` | `workloads/` | Local read-only directory indexed by Lumin |
 | `HOST` / `PORT` | `0.0.0.0` / `8000` | API listen address and port |
 | `LLM_API_URL` | `http://localhost:8000/v1/chat/completions` | API URL used by the UI |
 | `UI_HOST` / `UI_PORT` | `0.0.0.0` / `7860` | UI listen address and port |
@@ -118,9 +172,10 @@ NVIDIA container runtime before offloading layers.
 
 ## Docker deployment
 
-The Compose setup builds a CPU/OpenBLAS image and mounts `./models` read-only,
-so the multi-gigabyte model is not copied into the image. From the project
-root, with the GGUF in the documented path:
+The Compose setup builds a CPU/OpenBLAS image and mounts `./models` and
+`./workloads` read-only, so model weights and workload documents are not copied
+into the image. Workload content is also excluded from the Docker build
+context. From the project root, with the GGUF in the documented path:
 
 ```bash
 docker compose up --build
@@ -142,29 +197,31 @@ docker compose down
 If the Docker Compose plugin is unavailable, run the same image directly:
 
 ```bash
-docker build -t local-llm:dev .
-docker network create local-llm
-docker run -d --name local-llm-api --network local-llm \
-  --restart unless-stopped \
-  -p 127.0.0.1:8000:8000 \
-  -v "$PWD/models:/models:ro" \
-  -e MODEL_PATH=/models/allura-forge_Llama-3.3-8B-Instruct-Q4_K_M.gguf \
-  -e MODEL_ALIAS=local-llm -e N_CTX=2048 -e N_GPU_LAYERS=0 \
-  -e HOST=0.0.0.0 -e PORT=8000 \
-  local-llm:dev
-docker run -d --name local-llm-ui --network local-llm \
-  --restart unless-stopped \
-  -p 127.0.0.1:7860:7860 \
-  -e LLM_API_URL=http://local-llm-api:8000/v1/chat/completions \
-  -e LLM_MODEL=local-llm \
-  local-llm:dev python ui.py
+docker build -t lumin:dev .
+docker network create lumin
+docker run -d --name lumin-api --network lumin \\
+  --restart unless-stopped \\
+  -p 127.0.0.1:8000:8000 \\
+  -v "$PWD/models:/models:ro" \\
+  -e MODEL_PATH=/models/allura-forge_Llama-3.3-8B-Instruct-Q4_K_M.gguf \\
+  -e MODEL_ALIAS=lumin -e N_CTX=2048 -e N_GPU_LAYERS=0 \\
+  -e HOST=0.0.0.0 -e PORT=8000 \\
+  lumin:dev
+docker run -d --name lumin-ui --network lumin \\
+  --restart unless-stopped \\
+  -p 127.0.0.1:7860:7860 \\
+  -v "$PWD/workloads:/workloads:ro" \\
+  -e LLM_API_URL=http://lumin-api:8000/v1/chat/completions \\
+  -e LLM_MODEL=lumin \\
+  -e WORKLOAD_DOCS_PATH=/workloads \\
+  lumin:dev python ui.py
 ```
 
 Stop and remove the manually launched containers and network with:
 
 ```bash
-docker rm -f local-llm-ui local-llm-api
-docker network rm local-llm
+docker rm -f lumin-ui lumin-api
+docker network rm lumin
 ```
 
 To use a different GGUF path or context size, edit the `MODEL_PATH` or `N_CTX`
@@ -186,43 +243,43 @@ Gradio analytics by default; model requests are handled by the local API.
 ## Development strategy
 
 1. **Make inference reproducible first.** Keep Python and model versions
-   explicit, store model weights outside the image, and smoke-test the API and
-   chat format whenever dependencies or model artifacts change.
+explicit, store model weights outside the image, and smoke-test the API and
+chat format whenever dependencies or model artifacts change.
 2. **Define the data task before training.** Decide whether the goal is to
-   retrieve private or frequently changing facts, improve response style, or
-   teach a repeatable task. For retrieval and frequently changing knowledge,
-   start with retrieval-augmented generation (RAG) rather than changing model
-   weights. For stable behavior or task-specific responses, evaluate a
-   parameter-efficient fine-tune such as LoRA/QLoRA.
+retrieve private or frequently changing facts, improve response style, or
+teach a repeatable task. For retrieval and frequently changing knowledge,
+start with retrieval-augmented generation (RAG) rather than changing model
+weights. For stable behavior or task-specific responses, evaluate a
+parameter-efficient fine-tune such as LoRA/QLoRA.
 3. **Prepare a lawful, high-quality dataset.** Record provenance and usage
-   rights, remove secrets and personal data unless there is a documented basis
-   to use them, deduplicate and validate examples, and create separate
-   train/validation/test splits. Keep test examples out of training.
+rights, remove secrets and personal data unless there is a documented basis
+to use them, deduplicate and validate examples, and create separate
+train/validation/test splits. Keep test examples out of training.
 4. **Fine-tune the source model, not this GGUF quantization.** Use a suitable
-   training checkpoint and a dedicated training workflow (for example,
-   Transformers/PEFT); the current GGUF is quantized for inference. Evaluate
-   the adapter against the untouched baseline, then merge/convert and quantize
-   an approved result to GGUF for llama.cpp deployment.
+training checkpoint and a dedicated training workflow (for example,
+Transformers/PEFT); the current GGUF is quantized for inference. Evaluate
+the adapter against the untouched baseline, then merge/convert and quantize
+an approved result to GGUF for llama.cpp deployment.
 5. **Treat training and serving as separate workloads.** Version the data
-   preparation, training configuration, evaluation results, adapter, and
-   converted model. Don't put datasets or checkpoints in the serving image.
-   A 4 GB laptop GPU is unlikely to be a practical target for fine-tuning an
-   8B model; investigate quantized adapter training on suitable hardware and
-   measure actual memory needs before committing to that plan.
+preparation, training configuration, evaluation results, adapter, and
+converted model. Don't put datasets or checkpoints in the serving image.
+A 4 GB laptop GPU is unlikely to be a practical target for fine-tuning an
+8B model; investigate quantized adapter training on suitable hardware and
+measure actual memory needs before committing to that plan.
 6. **Add operational controls before sharing it.** Add tests for API/chat
-   behavior, model and data provenance, resource limits, authentication if
-   exposed beyond loopback, and a repeatable release/deployment process.
+behavior, model and data provenance, resource limits, authentication if
+exposed beyond loopback, and a repeatable release/deployment process.
 
 ## Troubleshooting
 
 - **Model file not found:** check the exact `MODEL_PATH`; in Compose verify the
-  host file exists under `models/` and is readable.
+host file exists under `models/` and is readable.
 - **Slow startup or out-of-memory:** start with `N_CTX=2048`, use CPU as the
-  configured default, close competing applications, and confirm enough RAM
-  for the weights plus runtime cache.
+configured default, close competing applications, and confirm enough RAM
+for the weights plus runtime cache.
 - **UI cannot reach the API:** start `python server.py` first for local use;
-  under Compose, inspect `docker compose logs api` and wait for its health
-  check to pass.
+under Compose, inspect `docker compose logs api` and wait for its health
+check to pass.
 - **Unexpected model responses:** use a GGUF compatible with llama.cpp and its
-  embedded chat template. If needed, set a supported `CHAT_FORMAT` for the
-  specific model.
+embedded chat template. If needed, set a supported `CHAT_FORMAT` for the
+specific model.
