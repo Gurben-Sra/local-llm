@@ -152,6 +152,27 @@ The one-shot inference smoke test loads the same model and prints a response:
 python run.py
 ```
 
+### Evaluate retrieval and answers
+
+Run the small, repeatable retrieval evaluation against the current workload
+documents:
+
+```bash
+python evaluate.py
+```
+
+The cases in `evaluation/cases.json` check that expected source files and facts
+are present in retrieved context, including a question that should return no
+matches. This checks retrieval, not model-generated answer quality. Add cases
+for important workload questions and their expected sources/facts; keep this
+evaluation set separate from the workload documents.
+
+Answers that use retrieved context now include an application-generated
+“Retrieved sources” list with exact file and line ranges. This makes source
+references consistent, but does not guarantee every answer is complete or
+correct. Review model responses against the evaluation cases before relying on
+them.
+
 ### Configuration
 
 | Variable | Default | Purpose |

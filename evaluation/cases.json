@@ -1,0 +1,31 @@
+[
+  {
+    "question": "Which file extensions can Lumin index? Give the complete list.",
+    "expected_sources": ["README.md"],
+    "expected_terms": [
+      ".md",
+      ".txt",
+      ".rst",
+      ".adoc",
+      ".yaml",
+      ".yml",
+      ".json",
+      ".toml",
+      ".ini",
+      ".cfg",
+      ".conf",
+      ".properties"
+    ]
+  },
+  {
+    "question": "What are the workload indexing limits?",
+    "expected_sources": ["README.md"],
+    "expected_terms": ["500 files", "1 MB per file", "10 MB total"]
+  },
+  {
+    "question": "What is the quasar telemetry identifier 9183?",
+    "expected_sources": [],
+    "expected_terms": [],
+    "expect_no_results": true
+  }
+]

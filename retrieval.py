@@ -33,6 +33,7 @@ STOP_WORDS = {
     "from",
     "how",
     "into",
+    "is",
     "that",
     "the",
     "this",
