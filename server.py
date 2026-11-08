@@ -21,7 +21,7 @@ app = create_app(
     model_settings=[
         ModelSettings(
             model=str(model_path),
-            model_alias=os.getenv("MODEL_ALIAS", "local-llm"),
+            model_alias=os.getenv("MODEL_ALIAS", "lumin"),
             n_ctx=int(os.getenv("N_CTX", "2048")),
             n_gpu_layers=int(os.getenv("N_GPU_LAYERS", "0")),
             chat_format=os.getenv("CHAT_FORMAT") or None,

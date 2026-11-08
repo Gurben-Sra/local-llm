@@ -1,10 +1,12 @@
+name: lumin
+
 services:
   api:
     build: .
     command: ["python", "server.py"]
     environment:
       MODEL_PATH: /models/allura-forge_Llama-3.3-8B-Instruct-Q4_K_M.gguf
-      MODEL_ALIAS: local-llm
+      MODEL_ALIAS: lumin
       N_CTX: "2048"
       N_GPU_LAYERS: "0"
       HOST: 0.0.0.0
@@ -31,7 +33,7 @@ services:
     command: ["python", "ui.py"]
     environment:
       LLM_API_URL: http://api:8000/v1/chat/completions
-      LLM_MODEL: local-llm
+      LLM_MODEL: lumin
       UI_HOST: 0.0.0.0
       UI_PORT: "7860"
       GRADIO_ANALYTICS_ENABLED: "False"

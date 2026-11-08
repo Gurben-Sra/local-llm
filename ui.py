@@ -88,8 +88,8 @@ def new_chat():
     return "", []
 
 
-with gr.Blocks() as demo:
-    gr.Markdown("### Local Chat UI\nRunning on your local model.")
+with gr.Blocks(title="Lumin") as demo:
+    gr.Markdown("### Lumin\nA local assistant for workload-specific knowledge.")
     chatbot = gr.Chatbot(value=[])
     txt = gr.Textbox(placeholder="Say something...", lines=1)
     with gr.Row():

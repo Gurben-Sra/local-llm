@@ -1,18 +1,20 @@
-# Local LLM
+# Lumin
 
-A local inference prototype for the Llama 3.3 8B Instruct GGUF model. It
-provides an OpenAI-compatible API and a small Gradio chat UI.
+Lumin is a lightweight, local assistant prototype. It currently provides an
+OpenAI-compatible inference API and a Gradio chat UI backed by a Llama 3.3 8B
+Instruct GGUF model.
 
 > **This project currently runs inference; it does not train or fine-tune a
-> model.** No user training dataset or training pipeline is present. The
-> checked-in model directory is local runtime data, not part of the Docker
-> image or source distribution.
+> model and does not yet have agent tools or document retrieval.** No workload
+> corpus, training dataset, or training pipeline is present. Model weights and
+> future workload data are local runtime inputs, not part of the Docker image
+> or source distribution.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    Browser[User browser] -->|localhost:7860| UI[Gradio chat UI]
+    Browser[User browser] -->|localhost:7860| UI[Lumin chat UI]
     subgraph Host[Local machine]
         subgraph Compose[Docker Compose network]
             UI -->|Chat Completions HTTP| API[llama.cpp OpenAI-compatible API]
@@ -22,11 +24,54 @@ flowchart LR
     end
 ```
 
-The browser talks to the UI through the loopback-published port. The UI sends
+The browser talks to Lumin through the loopback-published port. The UI sends
 chat requests to the API over the private container network. The API loads the
 GGUF file from the host-mounted `models/` directory; neither model weights nor
-training data are copied into the image. No training or dataset ingestion
-service is part of the current architecture.
+workload data are copied into the image. This is the current inference-only
+architecture.
+
+## Lumin roadmap
+
+The first workload is answering questions about explicitly selected workload
+documentation and configuration. Keep each workload's data separate from the
+base model and its serving image.
+
+1. **Establish a reproducible local baseline.** Keep CPU-only inference as the
+   default, make model and workload paths configurable, and test startup and
+   chat behavior.
+2. **Add local retrieval before fine-tuning.** Mount an operator-selected
+   workload directory read-only. Start with a lightweight local text index
+   (for example SQLite FTS) and return answers with source-file references.
+   Keep ingestion and retrieval offline; do not silently upload documents or
+   fetch dependencies at runtime. Add semantic embeddings only if evaluation
+   shows keyword retrieval is insufficient and the extra model cost fits the
+   target hardware.
+3. **Evaluate against a separate test set.** Keep representative
+   question/expected-source examples outside the retrieval corpus. Measure
+   whether answers are grounded in retrieved sources, whether citations point
+   to the right files, and how indexing affects memory, disk, and startup.
+   These examples are evaluation data, not automatically training data.
+4. **Introduce tools only when a workload needs them.** Begin with no tools
+   enabled. Add named, narrowly scoped capabilities behind an explicit
+   per-workload allowlist. For the document-question-answering workload,
+   command execution and file modification should remain disabled. If a
+   later task needs them, isolate it in a separate container with read-only
+   mounts by default, resource and time limits, and explicit operator approval
+   for writes or command execution.
+5. **Treat fine-tuning as a later, optional experiment.** Retrieval is the
+   better first choice for workload facts and configuration that can change.
+   Consider LoRA/QLoRA only for a demonstrated behavior or format gap, using
+   lawful curated examples and held-out evaluations. Fine-tune a suitable
+   source checkpoint, then convert and quantize an evaluated result for local
+   inference; do not train on the current inference GGUF.
+6. **Keep workload packages portable.** Version workload configuration,
+   source lists, evaluation cases, and index settings independently from Lumin.
+   Do not bundle sensitive source documents or indexes into the base image.
+   Record provenance and provide a way to rebuild an index locally.
+
+This sequence keeps the first useful agent-like capability—grounded,
+workload-specific answers—small and inspectable. It does not grant the model
+general shell access or write access to the workload.
 
 ## Requirements
 
@@ -104,7 +149,7 @@ python run.py
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `MODEL_PATH` | `models/allura-forge_Llama-3.3-8B-Instruct-Q4_K_M.gguf` | GGUF model file |
-| `MODEL_ALIAS` / `LLM_MODEL` | `local-llm` | API model name |
+| `MODEL_ALIAS` / `LLM_MODEL` | `lumin` | API model name |
 | `N_CTX` | `2048` | Context length |
 | `N_GPU_LAYERS` | `0` | Layers offloaded to a CUDA-enabled llama.cpp build |
 | `HOST` / `PORT` | `0.0.0.0` / `8000` | API listen address and port |
@@ -149,14 +194,14 @@ docker run -d --name local-llm-api --network local-llm \
   -p 127.0.0.1:8000:8000 \
   -v "$PWD/models:/models:ro" \
   -e MODEL_PATH=/models/allura-forge_Llama-3.3-8B-Instruct-Q4_K_M.gguf \
-  -e MODEL_ALIAS=local-llm -e N_CTX=2048 -e N_GPU_LAYERS=0 \
+  -e MODEL_ALIAS=lumin -e N_CTX=2048 -e N_GPU_LAYERS=0 \
   -e HOST=0.0.0.0 -e PORT=8000 \
   local-llm:dev
 docker run -d --name local-llm-ui --network local-llm \
   --restart unless-stopped \
   -p 127.0.0.1:7860:7860 \
   -e LLM_API_URL=http://local-llm-api:8000/v1/chat/completions \
-  -e LLM_MODEL=local-llm \
+  -e LLM_MODEL=lumin \
   local-llm:dev python ui.py
 ```
 
