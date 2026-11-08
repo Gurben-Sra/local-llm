@@ -7,3 +7,5 @@ resp.json
 models/*.gguf
 models/.cache/
 .pytest_cache/
+/workloads/*
+!/workloads/README.md

@@ -34,9 +34,12 @@ services:
     environment:
       LLM_API_URL: http://api:8000/v1/chat/completions
       LLM_MODEL: lumin
+      WORKLOAD_DOCS_PATH: /workloads
       UI_HOST: 0.0.0.0
       UI_PORT: "7860"
       GRADIO_ANALYTICS_ENABLED: "False"
+    volumes:
+      - ./workloads:/workloads:ro
     depends_on:
       api:
         condition: service_healthy

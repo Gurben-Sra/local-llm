@@ -4,11 +4,11 @@ Lumin is a lightweight, local assistant prototype. It currently provides an
 OpenAI-compatible inference API and a Gradio chat UI backed by a Llama 3.3 8B
 Instruct GGUF model.
 
-> **This project currently runs inference; it does not train or fine-tune a
-> model and does not yet have agent tools or document retrieval.** No workload
-> corpus, training dataset, or training pipeline is present. Model weights and
-> future workload data are local runtime inputs, not part of the Docker image
-> or source distribution.
+> **This project runs inference and read-only local document retrieval; it
+> does not train or fine-tune a model and has no command or file-write agent
+> tools.** No workload corpus or training dataset is bundled. Model weights and
+> workload data are local runtime inputs, not part of the Docker image or
+> source distribution.
 
 ## Architecture
 
@@ -20,15 +20,17 @@ flowchart LR
             UI -->|Chat Completions HTTP| API[llama.cpp OpenAI-compatible API]
         end
         Weights[(Host models/ directory)]
+        WorkloadDocs[(Host workloads/ directory)]
         Weights -.->|read-only mount; API loads GGUF| API
+        WorkloadDocs -.->|read-only mount; UI indexes locally| UI
     end
 ```
 
 The browser talks to Lumin through the loopback-published port. The UI sends
 chat requests to the API over the private container network. The API loads the
-GGUF file from the host-mounted `models/` directory; neither model weights nor
-workload data are copied into the image. This is the current inference-only
-architecture.
+GGUF file from the host-mounted `models/` directory. The UI indexes curated
+workload documents from a separate read-only mount using an in-memory SQLite
+FTS index; neither model weights nor workload data are copied into the image.
 
 ## Lumin roadmap
 
@@ -39,13 +41,13 @@ base model and its serving image.
 1. **Establish a reproducible local baseline.** Keep CPU-only inference as the
    default, make model and workload paths configurable, and test startup and
    chat behavior.
-2. **Add local retrieval before fine-tuning.** Mount an operator-selected
-   workload directory read-only. Start with a lightweight local text index
-   (for example SQLite FTS) and return answers with source-file references.
-   Keep ingestion and retrieval offline; do not silently upload documents or
-   fetch dependencies at runtime. Add semantic embeddings only if evaluation
-   shows keyword retrieval is insufficient and the extra model cost fits the
-   target hardware.
+2. **Keep retrieval local and bounded.** Lumin mounts an operator-selected
+   workload directory read-only, indexes supported text and configuration
+   formats in memory with SQLite FTS, and returns source paths and line ranges
+   relative to the mounted directory as references. It does not silently upload
+   documents or fetch dependencies at runtime. Add semantic embeddings only if
+   evaluation shows keyword retrieval is insufficient and the extra model cost
+   fits the target hardware.
 3. **Evaluate against a separate test set.** Keep representative
    question/expected-source examples outside the retrieval corpus. Measure
    whether answers are grounded in retrieved sources, whether citations point
@@ -110,6 +112,12 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
+Put curated workload documentation and non-secret configuration in
+`workloads/`. The UI indexes supported files at startup. See
+[workloads/README.md](./workloads/README.md) for accepted formats and limits.
+No documents are required to start; without matching sources, Lumin reports
+that it could not find a supporting reference.
+
 `llama-cpp-python` builds a CPU backend by default. Building it from source can
 take several minutes and requires a C/C++ compiler and CMake. To use optimized
 OpenBLAS on Linux, install its development headers and set the build options
@@ -152,6 +160,7 @@ python run.py
 | `MODEL_ALIAS` / `LLM_MODEL` | `lumin` | API model name |
 | `N_CTX` | `2048` | Context length |
 | `N_GPU_LAYERS` | `0` | Layers offloaded to a CUDA-enabled llama.cpp build |
+| `WORKLOAD_DOCS_PATH` | `workloads/` | Local read-only directory indexed by Lumin |
 | `HOST` / `PORT` | `0.0.0.0` / `8000` | API listen address and port |
 | `LLM_API_URL` | `http://localhost:8000/v1/chat/completions` | API URL used by the UI |
 | `UI_HOST` / `UI_PORT` | `0.0.0.0` / `7860` | UI listen address and port |
@@ -163,9 +172,10 @@ NVIDIA container runtime before offloading layers.
 
 ## Docker deployment
 
-The Compose setup builds a CPU/OpenBLAS image and mounts `./models` read-only,
-so the multi-gigabyte model is not copied into the image. From the project
-root, with the GGUF in the documented path:
+The Compose setup builds a CPU/OpenBLAS image and mounts `./models` and
+`./workloads` read-only, so model weights and workload documents are not copied
+into the image. Workload content is also excluded from the Docker build
+context. From the project root, with the GGUF in the documented path:
 
 ```bash
 docker compose up --build
@@ -187,29 +197,31 @@ docker compose down
 If the Docker Compose plugin is unavailable, run the same image directly:
 
 ```bash
-docker build -t local-llm:dev .
-docker network create local-llm
-docker run -d --name local-llm-api --network local-llm \
+docker build -t lumin:dev .
+docker network create lumin
+docker run -d --name lumin-api --network lumin \
   --restart unless-stopped \
   -p 127.0.0.1:8000:8000 \
   -v "$PWD/models:/models:ro" \
   -e MODEL_PATH=/models/allura-forge_Llama-3.3-8B-Instruct-Q4_K_M.gguf \
   -e MODEL_ALIAS=lumin -e N_CTX=2048 -e N_GPU_LAYERS=0 \
   -e HOST=0.0.0.0 -e PORT=8000 \
-  local-llm:dev
-docker run -d --name local-llm-ui --network local-llm \
+  lumin:dev
+docker run -d --name lumin-ui --network lumin \
   --restart unless-stopped \
   -p 127.0.0.1:7860:7860 \
-  -e LLM_API_URL=http://local-llm-api:8000/v1/chat/completions \
+  -v "$PWD/workloads:/workloads:ro" \
+  -e LLM_API_URL=http://lumin-api:8000/v1/chat/completions \
   -e LLM_MODEL=lumin \
-  local-llm:dev python ui.py
+  -e WORKLOAD_DOCS_PATH=/workloads \
+  lumin:dev python ui.py
 ```
 
 Stop and remove the manually launched containers and network with:
 
 ```bash
-docker rm -f local-llm-ui local-llm-api
-docker network rm local-llm
+docker rm -f lumin-ui lumin-api
+docker network rm lumin
 ```
 
 To use a different GGUF path or context size, edit the `MODEL_PATH` or `N_CTX`
