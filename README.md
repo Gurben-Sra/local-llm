@@ -199,22 +199,8 @@ If the Docker Compose plugin is unavailable, run the same image directly:
 ```bash
 docker build -t lumin:dev .
 docker network create lumin
-docker run -d --name lumin-api --network lumin \
-  --restart unless-stopped \
-  -p 127.0.0.1:8000:8000 \
-  -v "$PWD/models:/models:ro" \
-  -e MODEL_PATH=/models/allura-forge_Llama-3.3-8B-Instruct-Q4_K_M.gguf \
-  -e MODEL_ALIAS=lumin -e N_CTX=2048 -e N_GPU_LAYERS=0 \
-  -e HOST=0.0.0.0 -e PORT=8000 \
-  lumin:dev
-docker run -d --name lumin-ui --network lumin \
-  --restart unless-stopped \
-  -p 127.0.0.1:7860:7860 \
-  -v "$PWD/workloads:/workloads:ro" \
-  -e LLM_API_URL=http://lumin-api:8000/v1/chat/completions \
-  -e LLM_MODEL=lumin \
-  -e WORKLOAD_DOCS_PATH=/workloads \
-  lumin:dev python ui.py
+docker run -d --name lumin-api --network lumin --restart unless-stopped -p 127.0.0.1:8000:8000 -v "$PWD/models:/models:ro" -e MODEL_PATH=/models/allura-forge_Llama-3.3-8B-Instruct-Q4_K_M.gguf -e MODEL_ALIAS=lumin -e N_CTX=2048 -e N_GPU_LAYERS=0 -e HOST=0.0.0.0 -e PORT=8000 lumin:dev
+docker run -d --name lumin-ui --network lumin --restart unless-stopped -p 127.0.0.1:7860:7860 -v "$PWD/workloads:/workloads:ro" -e LLM_API_URL=http://lumin-api:8000/v1/chat/completions -e LLM_MODEL=lumin -e WORKLOAD_DOCS_PATH=/workloads lumin:dev python ui.py
 ```
 
 Stop and remove the manually launched containers and network with:
